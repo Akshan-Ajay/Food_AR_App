@@ -1,1 +1,247 @@
-<?php echo "Admin Payment List Page"; ?>
+<?php
+session_start();
+
+// Admin only check
+if (!isset($_SESSION['admin_id'])) {
+    header("Location: /food_ar_app/admin/index.php");
+    exit();
+}
+
+include('C:/xampp/htdocs/food_ar_app/includes/db.php');
+$admin_name = $_SESSION['admin_name'] ?? "Admin";
+
+// Fetch all payments with user and order info
+$sqlPayments = "
+    SELECT p.PaymentID, p.OrderID, p.UserID, p.PaymentAmount, p.PaymentMethod, p.PaymentStatus, p.CreatedAt,
+           u.FullName, u.Email, u.ContactNumber,
+           o.TotalAmount, o.Status AS OrderStatus
+    FROM Payments p
+    JOIN Users u ON p.UserID = u.UserID
+    JOIN Orders o ON p.OrderID = o.OrderID
+    ORDER BY p.CreatedAt DESC
+";
+$stmtPayments = sqlsrv_query($conn, $sqlPayments);
+if ($stmtPayments === false) die(print_r(sqlsrv_errors(), true));
+
+$payments = [];
+while($row = sqlsrv_fetch_array($stmtPayments, SQLSRV_FETCH_ASSOC)) {
+    $payments[] = $row;
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment History — Carrie's Cafe</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+        :root {
+            --primary: #c0392b;
+            --accent: #e67e22;
+            --bg: #fdfaf8;
+            --sidebar: #1e120a;
+            --text: #3b2314;
+            --card: #ffffff;
+            --border: #ece0d1;
+            --radius: 16px;
+            --shadow: 0 10px 30px rgba(44,26,14,0.08);
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+
+        /* SIDEBAR */
+        .sidebar { width: 260px; background: var(--sidebar); position: fixed; height: 100vh; z-index: 1000; }
+        .sidebar-logo { padding: 30px 20px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .sidebar-logo img { width: 140px; border-radius: 10px; margin-bottom: 10px; }
+        .nav-section { color: rgba(255,255,255,0.3); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 2px; padding: 20px 25px 5px; }
+        .sidebar nav a { 
+            display: flex; align-items: center; gap: 15px; padding: 12px 25px; color: rgba(255,255,255,0.6); 
+            text-decoration: none; font-size: 0.9rem; transition: var(--transition); border-left: 4px solid transparent;
+        }
+        .sidebar nav a:hover, .sidebar nav a.active { background: rgba(255,255,255,0.05); color: #fff; border-left-color: var(--accent); }
+
+        /* MAIN AREA */
+        .main { margin-left: 260px; flex: 1; display: flex; flex-direction: column; width: calc(100% - 260px); }
+        .topbar { 
+            background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); 
+            padding: 15px 40px; display: flex; align-items: center; justify-content: space-between;
+            position: sticky; top: 0; z-index: 900; border-bottom: 1px solid var(--border);
+        }
+        .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; }
+
+        /* USER & NOTIF CONTROLS */
+        .user-controls { display: flex; align-items: center; gap: 25px; }
+        .notif-trigger { position: relative; font-size: 1.4rem; cursor: pointer; }
+        .notif-badge { position: absolute; top: -5px; right: -5px; background: var(--primary); color: #fff; font-size: 10px; padding: 2px 5px; border-radius: 50%; border: 2px solid #fff; display: none; }
+        .user-pill { 
+            background: #fff; border: 1px solid var(--border); border-radius: 50px; padding: 5px 15px 5px 5px;
+            display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 0.85rem; text-decoration: none; color: var(--text);
+        }
+        .avatar { width: 32px; height: 32px; background: var(--sidebar); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+        
+        /* NOTIFICATION BOX */
+        .notif-box { 
+            display: none; position: absolute; right: 0; top: 45px; width: 320px; background: #fff; 
+            border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); border: 1px solid var(--border); 
+            max-height: 400px; overflow-y: auto; z-index: 1001; 
+        }
+        .notif-item { padding: 15px; border-bottom: 1px solid #eee; font-size: 0.85rem; }
+        .notif-item.unread { background: #fffaf5; border-left: 4px solid var(--accent); }
+
+        /* CONTENT */
+        .content { padding: 40px; }
+        .card { background: var(--card); border-radius: var(--radius); padding: 30px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+        .card-header h3 { font-family: 'Playfair Display', serif; font-size: 1.4rem; }
+
+        /* TABLE STYLING */
+        table { width: 100%; border-collapse: collapse; }
+        thead th { text-align: left; padding: 12px; font-size: 0.75rem; color: #999; text-transform: uppercase; border-bottom: 1px solid var(--border); letter-spacing: 1px; }
+        tbody td { padding: 15px 12px; border-bottom: 1px solid #f9f4f0; font-size: 0.9rem; vertical-align: middle; }
+        tr:hover { background-color: #fdfaf8; }
+        
+        /* BADGES */
+        .badge { padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+        .badge.completed { background: #e8f5e9; color: #2e7d32; }
+        .badge.pending { background: #fff8e1; color: #f57f17; }
+        .badge.failed { background: #ffebee; color: #c62828; }
+        
+        .amount { font-family: 'Inter', sans-serif; font-weight: 700; color: var(--sidebar); }
+        .order-id { color: var(--accent); font-weight: 700; text-decoration: none; }
+        .order-id:hover { text-decoration: underline; }
+
+        @media (max-width: 1024px) { .sidebar { display:none; } .main { margin-left:0; width:100%; } }
+    </style>
+</head>
+<body>
+
+<aside class="sidebar">
+    <div class="sidebar-logo">
+        <img src="/food_ar_app/admin/Lor.png" alt="Logo">
+        <div style="color:var(--accent); font-size:0.7rem; font-weight:700; margin-top:5px;">MANAGEMENT</div>
+    </div>
+    <nav>
+        <div class="nav-section">Dashboard</div>
+        <a href="/food_ar_app/admin/dashboard.php"><span class="icon">📊</span> Dashboard</a>
+        <div class="nav-section">Foods</div>
+        <a href="/food_ar_app/admin/menu/menu_manage.php" class="active"><span class="icon">🍽️</span> Foods</a>
+        <div class="nav-section">Payment</div>
+        <a href="/food_ar_app/admin/payment/view_payments.php"><span class="icon">💳</span> Payments</a>
+        <div class="nav-section">Reservation</div>
+        <a href="/food_ar_app/admin/reservation/reservation_manage.php"><span class="icon">📋</span> Bookings</a>
+        <div class="nav-section">Orders</div>
+        <a href="/food_ar_app/admin/order/view_orders.php"><span class="icon">📦</span> Orders</a>
+        <div class="nav-section">FEEDBACK</div>
+        <a href="/food_ar_app/admin/feedback/feedback_manage.php"><span class="icon">💬</span> Feedback</a>
+    </nav>
+</aside>
+
+<audio id="notifSound" src="/food_ar_app/admin/sounds/notify.mp3" preload="auto"></audio>
+
+<div class="main">
+    <div class="topbar">
+        <span class="page-title">Payment Ledger</span>
+        <div class="user-controls">
+            <div class="notif-trigger" onclick="toggleNotifications()">
+                🔔 <span id="notifCount" class="notif-badge">0</span>
+                <div id="notifList" class="notif-box"></div>
+            </div>
+            <a href="/food_ar_app/admin/index.php" class="user-pill">
+                <div class="avatar"><?php echo strtoupper(substr($admin_name,0,2)); ?></div>
+                <span>Logout</span>
+            </a>
+        </div>
+    </div>
+
+    <div class="content">
+        <div class="card">
+            <div class="card-header">
+                <h3>Transaction History</h3>
+                <div style="font-size:0.8rem; color:#888;">Showing latest transactions</div>
+            </div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Order</th>
+                        <th>Customer</th>
+                        <th>Method</th>
+                        <th>Amount</th>
+                        <th>Payment Status</th>
+                        <th>Order Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach($payments as $p): ?>
+                    <tr>
+                        <td style="color:#aaa; font-weight:600;">#<?= $p['PaymentID'] ?></td>
+                        <td><a href="../order/order_details.php?id=<?= $p['OrderID'] ?>" class="order-id">#<?= $p['OrderID'] ?></a></td>
+                        <td>
+                            <div style="font-weight:600;"><?= htmlspecialchars($p['FullName']) ?></div>
+                            <div style="font-size:0.75rem; color:#888;"><?= htmlspecialchars($p['ContactNumber'] ?? '-') ?></div>
+                        </td>
+                        <td><span style="font-size:0.85rem; color:#666;"><i class="fas fa-wallet" style="margin-right:5px;"></i> <?= htmlspecialchars($p['PaymentMethod']) ?></span></td>
+                        <td class="amount">LKR <?= number_format($p['PaymentAmount'], 2) ?></td>
+                        <td><span class="badge <?= strtolower($p['PaymentStatus']) ?>"><?= $p['PaymentStatus'] ?></span></td>
+                        <td><span class="badge <?= strtolower($p['OrderStatus']) ?>"><?= $p['OrderStatus'] ?></span></td>
+                        <td style="font-size:0.8rem; color:#666;">
+                            <?= $p['CreatedAt'] ? $p['CreatedAt']->format('M d, Y') : 'N/A' ?><br>
+                            <span style="color:#aaa;"><?= $p['CreatedAt'] ? $p['CreatedAt']->format('h:i A') : '' ?></span>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        
+        <div style="margin-top:20px;">
+            <a href="/food_ar_app/admin/dashboard.php" style="text-decoration:none; color:var(--sidebar); font-weight:600; font-size:0.9rem;">
+                ← Back to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+// Notification logic mirrored from dashboard
+let lastCount = 0;
+async function loadNotifications() {
+    try {
+        const response = await fetch('/food_ar_app/admin/notification/fetch_admin_notifications.php');
+        const data = await response.json();
+        let html = `<div style="padding:15px; font-weight:bold; border-bottom:1px solid #eee;">Notifications</div>`;
+        let unread = 0;
+        data.forEach(n => {
+            if (n.IsRead == 0) unread++;
+            html += `<div class="notif-item ${n.IsRead == 0 ? 'unread' : ''}">
+                <div style="font-weight:600">${n.FullName}</div>
+                <div style="color:#666">${n.Message}</div>
+            </div>`;
+        });
+        document.getElementById("notifList").innerHTML = html || '<div style="padding:20px;">No updates</div>';
+        const badge = document.getElementById("notifCount");
+        badge.innerText = unread;
+        badge.style.display = unread > 0 ? 'block' : 'none';
+        if (unread > lastCount) document.getElementById("notifSound").play();
+        lastCount = unread;
+    } catch (e) {}
+}
+
+function toggleNotifications() {
+    const list = document.getElementById("notifList");
+    list.style.display = list.style.display === "block" ? "none" : "block";
+    if(list.style.display === "block") fetch('/food_ar_app/admin/notification/mark_notifications_read.php');
+}
+
+loadNotifications();
+setInterval(loadNotifications, 5000);
+</script>
+
+</body>
+</html>
